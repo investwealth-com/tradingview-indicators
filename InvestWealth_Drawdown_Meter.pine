@@ -1,0 +1,71 @@
+//@version=6
+// InvestWealth Drawdown Meter v1.0 (free, open-source)
+// How far is the market below its high, what gain does it need to get back, how long has it been under water,
+// and how bad was the worst fall in the loaded history? Closed bars only (no repainting). Works on any symbol and timeframe.
+// Educational tool, not investment advice. © 2026 Harry Hamann (Invest_Wealth). Published under the Mozilla Public License 2.0.
+indicator("InvestWealth Drawdown Meter", shorttitle = "IW DD Meter", overlay = false, format = format.percent, precision = 1)
+
+// ---------- inputs ----------
+grpC    = "Calculation"
+useHL   = input.bool(true, "Measure from highs and lows (off: closes only)", group = grpC, tooltip = "On: the high is the highest high and today's value uses the low, the way most people experience a fall. Off: closes only, smoother.")
+alertDD = input.float(20, "Alert when the fall is deeper than, %", minval = 1, step = 1, group = grpC)
+grpV    = "Display"
+showTbl = input.bool(true, "Show the table", group = grpV)
+tblPos  = input.string("Top right", "Table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
+tblSize = input.string("Normal", "Table text size", options = ["Small", "Normal", "Large"], group = grpV)
+
+// ---------- theme (follows the chart: light text on dark charts, dark text on light charts) ----------
+isDark  = (color.r(chart.bg_color) * 299 + color.g(chart.bg_color) * 587 + color.b(chart.bg_color) * 114) / 1000 < 128
+cText   = chart.fg_color
+cBorder = color.new(chart.fg_color, 80)
+cPanel  = color.new(chart.bg_color, 10)
+cDown   = isDark ? #f85149 : #cf222e
+tSize   = tblSize == "Small" ? size.small : tblSize == "Large" ? size.large : size.normal
+
+// ---------- calculation ----------
+src   = useHL ? high : close
+cur   = useHL ? low  : close
+var float peak = na
+peak := na(peak) ? src : math.max(peak, src)
+dd    = (cur / peak - 1) * 100                      // 0 at a new high, negative below it
+rec   = dd < 0 ? (peak / cur - 1) * 100 : 0.0       // gain needed to get back to the high
+newHigh = na(peak[1]) or src >= peak[1]              // this bar set a new high: the clock restarts
+var int   uwBars  = 0
+var int   uwStart = time
+if newHigh
+    uwBars  := 0
+    uwStart := time
+else
+    uwBars  += 1
+uwDays = math.round((time - uwStart) / 86400000.0)
+var float worst = 0.0
+worst := math.min(worst, dd)
+
+// ---------- plot ----------
+col = dd <= -30 ? color.new(#f85149, 0) : dd <= -20 ? color.new(#f0883e, 0) : dd <= -10 ? color.new(#58a6ff, 0) : color.new(#9aa4b2, 0)
+plot(dd, "Drawdown from the high, %", style = plot.style_columns, color = color.new(col, 35))
+plot(0, "High", color = cBorder)
+hline(-10, "−10 %", color = color.new(#58a6ff, 70), linestyle = hline.style_dotted)
+hline(-20, "−20 %", color = color.new(#f0883e, 70), linestyle = hline.style_dotted)
+hline(-30, "−30 %", color = color.new(#f85149, 70), linestyle = hline.style_dotted)
+
+// ---------- table ----------
+unit  = timeframe.isdaily and timeframe.multiplier == 1 ? " trading days" : timeframe.isweekly and timeframe.multiplier == 1 ? " weeks" : timeframe.ismonthly and timeframe.multiplier == 1 ? " months" : " bars"
+spell = str.tostring(uwBars, "#,###") + unit + (uwDays >= 365 ? " (" + str.tostring(uwDays / 365.25, "#.0") + " yrs)" : "")
+pos   = tblPos == "Top right" ? position.top_right : tblPos == "Top left" ? position.top_left : tblPos == "Bottom right" ? position.bottom_right : position.bottom_left
+var table t = table.new(pos, 2, 5, border_width = 1, border_color = cBorder, bgcolor = cPanel)
+if showTbl and barstate.islast
+    table.cell(t, 0, 0, "InvestWealth · Drawdown Meter", text_color = cText, text_size = tSize, tooltip = "How far the market is below its highest point in the loaded history. 0 % = at a new high.")
+    table.cell(t, 1, 0, str.tostring(dd, "#.0") + " %", text_color = dd > -10 ? cText : color.black, bgcolor = dd > -10 ? color.new(chart.fg_color, 85) : col, text_size = tSize)
+    table.cell(t, 0, 1, "Gain needed to recover", text_color = cText, text_size = tSize, tooltip = "A fall of 20 % needs +25 % to get back; a fall of 50 % needs +100 %. Losses weigh more than gains.")
+    table.cell(t, 1, 1, "+" + str.tostring(rec, "#.0") + " %", text_color = cText, text_size = tSize)
+    table.cell(t, 0, 2, "Time under water", text_color = cText, text_size = tSize, tooltip = "Bars since the last high.")
+    table.cell(t, 1, 2, spell, text_color = cText, text_size = tSize)
+    table.cell(t, 0, 3, "Worst fall (loaded history)", text_color = cText, text_size = tSize, tooltip = "Deepest drawdown in the bars loaded on this chart. Scroll back for more history.")
+    table.cell(t, 1, 3, str.tostring(worst, "#.0") + " %", text_color = cDown, text_size = tSize)
+    table.cell(t, 0, 4, "Educational tool, not investment advice", text_color = color.new(chart.fg_color, 40), text_size = size.small, text_halign = text.align_left)
+    table.cell(t, 1, 4, "", text_color = color.new(chart.fg_color, 40), text_size = size.small)
+
+// ---------- alerts ----------
+alertcondition(ta.crossunder(dd, -alertDD), "Drawdown deeper than the alert level", "Drawdown Meter: {{ticker}} is more than the alert level below its high.")
+alertcondition(newHigh and not newHigh[1] and uwBars[1] > 0, "Back at a new high", "Drawdown Meter: {{ticker}} is back at a new high.")
